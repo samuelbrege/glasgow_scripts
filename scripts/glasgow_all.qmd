@@ -1,0 +1,676 @@
+---
+title: "Glasgow Analysis"
+subtitle: "Computational analysis of the Glasgow dataset"
+format:
+  revealjs: 
+    slide-number: true
+    chalkboard: 
+      buttons: false
+    preview-links: auto
+    # logo: images/quarto.png
+    css: styles.css
+    footer: Anticevic Lab - N3 Division - Yale School of Medicine
+    author: Sam Brege, Clara Fontenau
+resources:
+  - glasgow_analysis.pdf
+---
+
+## Table of contents
+
+These slides contain our current analysis of the Glasgow dataset, with both behavioral and neuroimaging data
+
+-   Demographics
+-   Behavioral Analysis
+-   Follow-up data
+-   Neuroimaging
+
+## Building Demographics and Behavioral data {.smaller}
+
+For ease of analysis, the data is seperated into many smaller csvs based on variable type and whether the subject is suitable for analysis.
+
+Related code can be found in glasgow_behavior.py. The function here is:
+
+- `build_csvs(input_data, subj_status, output_dir)`
+
+```{.python}
+import os
+os.chdir("../src")
+from glasgow_behavior import build_csvs
+
+build_csvs("../data/GlasgowStudyAll.csv","../data/subj_status.csv","../csvs")
+```
+
+## Demographics Table
+
+N=205, generated in R using output from build_csvs
+
+```{r}
+#| echo: false
+#| fig-width: 10
+#| fig-height: 4.5
+
+#### Packages
+library("gtsummary")
+library("dplyr")
+library("labelled")
+library(plotrix)
+library(ggplot2)
+library("webshot2")
+library("gt")
+library("naniar")
+library(foreign)
+library(tidyr)
+library(tidyverse)
+
+### Load raw data
+Glasgow_demographics <- read.csv("../data/YouR_Study_All_Misc.csv")
+
+## Change all -9999 to NA
+Glasgow_demographics[Glasgow_demographics=="-9999"] <- NA
+Glasgow_demographics[Glasgow_demographics=="-99999"] <- NA
+
+Glasgow_demographics$Group[Glasgow_demographics$Group=="0"] <- "CON"
+Glasgow_demographics$Group[Glasgow_demographics$Group=="1"] <- "CHR-N"
+Glasgow_demographics$Group[Glasgow_demographics$Group=="2"] <- "CHR-P"
+Glasgow_demographics$Group[Glasgow_demographics$Group=="3"] <- "FEP"
+Glasgow_demographics$Group[Glasgow_demographics$Group=="4"] <- "Transition to FEP"
+Glasgow_demographics$Group[Glasgow_demographics$Group=="5"] <- "Transition to CHR-P"
+
+Glasgow_demographics$Medication[Glasgow_demographics$Medication=="0"] <- "None"
+Glasgow_demographics$Medication[Glasgow_demographics$Medication=="1"] <- "Anti-psychotic"
+Glasgow_demographics$Medication[Glasgow_demographics$Medication=="2"] <- "Mood Stabilizer"
+Glasgow_demographics$Medication[Glasgow_demographics$Medication=="3"] <- "Anti-depressant"
+Glasgow_demographics$Medication[Glasgow_demographics$Medication=="4"] <- "Anti-convulsant"
+Glasgow_demographics$Medication[Glasgow_demographics$Medication=="5"] <- "Other"
+Glasgow_demographics$Medication[Glasgow_demographics$Medication=="6"] <- "Multiple"
+
+Glasgow_demographics$Gender[Glasgow_demographics$Gender=="0"] <- "Male"
+Glasgow_demographics$Gender[Glasgow_demographics$Gender=="1"] <- "Female"
+
+Glasgow_demographics$Age_consent <- as.numeric(Glasgow_demographics$Age_consent)
+Glasgow_demographics$Edu_years <- as.numeric(Glasgow_demographics$Edu_years)
+
+Glasgow_demographics <- Glasgow_demographics %>% 
+  mutate(Group = factor(Group, levels =  c("CON", "CHR-N", "Transition to CHR-P", "CHR-P", "FEP", "First Episode Psychosis")))
+
+
+Glasgow_demographics_table <- Glasgow_demographics %>%
+  select(Group, Gender, Age_consent, Edu_years, Medication)
+
+Glasgow_table <- tbl_summary(Glasgow_demographics_table, by=Group, missing="no", type = list(Age_consent ~ 'continuous', Edu_years ~ 'continuous', Gender ~ 'categorical', Medication ~ 'categorical'),
+                        statistic = list(all_continuous() ~ "{mean} ({std.error})",
+                                        all_categorical() ~ "{n} ({p}%)"))  %>% as_gt()
+
+Glasgow_table
+```
+
+## Building NBRIDGE inputs
+
+Once relevant variables have been chosen, the data must be reassembled into one .tsv with an NBRIDGE friendly format. This function extracts the CAARMS, BACS, and S-PIA instruments, and creates composite variables where relevant. This can then be used as input to NBRIDGE which will do the Principal Component Analysis.
+
+- `build_nbridge(csv_dir, output_dir)`
+
+```{.python}
+import os
+os.chdir("../src")
+from glasgow_behavior import build_nbridge
+
+build_nbridge("../csvs","../data")
+```
+
+## Correlation - Model 1
+
+The first model uses all groups, including Transition groups
+
+```{python}
+#| echo: false
+#| fig-width: 10
+#| fig-height: 5
+
+import os
+os.chdir("../src")
+from glasgow_behavior import plot_correlation
+
+plot_correlation("../data/nbridge_model1_n203/analysis/figures/NBRIDGE_Glasgow.collaboration_SPIA_NA_CAARMS-BACS-SPIA_n203_prep_AB_BehaviorCorrelation.tsv","../figures/model1_n203_correlation.png")
+
+```
+
+## PC scores - Model 1
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+from matplotlib.patches import Rectangle
+from matplotlib.patches import Patch
+import ptitprince as pt
+import statsmodels.stats.multicomp as mc
+from scipy import stats
+#Change to prevent overwrite of previous plots (if you want)
+run_identifier = ""
+#use_case_labels = ['n203', 'n187']
+use_case_labels = ['n203']
+sig_pcs = [3]
+#relative
+dataPaths = ['../data/nbridge_model1_n203/analysis/figures/NBRIDGE_Glasgow.collaboration_SPIA_NA_CAARMS-BACS-SPIA_n203_prep_CG_BehaviorPCARidgeline_PC1.tsv',
+             '../../nbridge/Glasgow.collaboration_SPIA_NoTransition_CAARMS-BACS-SPIA_n187/analysis/figures/NBRIDGE_Glasgow.collaboration_SPIA_NoTransition_CAARMS-BACS-SPIA_n187_prep_CG_BehaviorPCARidgeline_PC1.tsv']
+
+sns.set_theme(style="white",font_scale=1.5, rc={'ytick.labelsize': "0", 'ytick.color': "white"})
+
+#palette
+#cPalette = ["grey", "#ff3616", "#F0E442", "#7FFF00", "#7FFFD4", "#00BFFF", "#0000EE"]
+cPalette = ["#003f5c","#444e86","#955196","#dd5182","#ff6e54","#ffa600", "grey"]
+cPalette.reverse()
+
+reverse=True
+
+
+
+order = ['PTT', 'Control', 'Clinical High Risk - Negative', 'Transition to HR', 'Clinical High Risk - Positive', 'Transition to FEP', 'First Episode Psychosis']
+
+if reverse:
+    order.reverse()
+    cPalette.reverse()
+
+for i in range(len(use_case_labels)):
+    counts = []
+
+    use_case = use_case_labels[i]
+
+    if use_case == 'n187' or use_case == 'SPIA_n187':
+        order = ['PTT', 'Control', 'Clinical High Risk - Negative', 'Clinical High Risk - Positive', 'First Episode Psychosis']
+        order.reverse()
+        cPalette = ["#003f5c","#955196","#dd5182","#ffa600", "grey"]
+    else:
+        order = ['PTT', 'Control', 'Clinical High Risk - Negative', 'Transition to HR', 'Clinical High Risk - Positive', 'Transition to FEP', 'First Episode Psychosis']
+        cPalette = ["#003f5c","#444e86","#955196","#dd5182","#ff6e54","#ffa600", "grey"]
+        order.reverse()
+
+
+    df = pd.read_csv(dataPaths[i], sep= "\t")
+
+    #Get group counts for legend label
+    counts_df = df["Group"].value_counts()
+    for group in order:
+        counts.append(counts_df[group])
+
+    counts.reverse()
+
+    
+    if use_case == "n187" or use_case == 'SPIA_n187':
+        legendLabels = [f'PTT (N={counts[0]})', f'Control (N={counts[1]})', f'Clinical High Risk - Negative (N={counts[2]})', f'Clinical High Risk - Positive (N={counts[3]})', f'First Episode Psychosis (N={counts[4]})']
+    else:
+        legendLabels = [f'PTT (N={counts[0]})', f'Control (N={counts[1]})', f'Clinical High Risk - Negative (N={counts[2]})', f'Transition to HR (N={counts[3]})', f'Clinical High Risk - Positive (N={counts[4]})', f'Transition to FEP (N={counts[5]})', f'First Episode Psychosis (N={counts[6]})']
+
+
+    if reverse:
+            legendLabels.reverse()
+
+    sig_pc = sig_pcs[i]
+    fig, axes = plt.subplots(1,3,figsize=(24, 8))
+    #fig.tight_layout(pad=0.7)
+    for pc in range(sig_pc):
+        #Add 1 to pc because range starts at 0
+        dx = "Group"; dy = f"PC{pc+1}"; ort = "h"; sigma = .5; cut=1.7; move=0.2; linewidth=2.5; 
+        scale=0.85; pointplot=False; 
+
+        #figsize = (width, height)
+        ax = axes[pc]
+
+        #if use_case in ['n187', 'n203', 'SPIA_n187']:
+        df[dy] = df[dy] * -1
+
+        ax=pt.RainCloud(x = dx, y = dy, data = df, palette = cPalette, bw = sigma, cut=cut, order=order, pointplot=pointplot,
+                        width_viol = scale, ax = ax, orient = ort, move = move, scale="width", linewidth = linewidth, linecolor="red")
+
+        ax.set_ylabel("")
+        ax.set_xlabel("")
+        ax.set_xlim(-18,20)
+
+        #Legend settings, pt.RainCloud has no legend, so must be set manually. Labels must be in same order for everything to match
+        #fontsize controls size, bbox is the location, frameon is the legend frame
+        #ax.legend(legendLabels, loc="lower left", fontsize=12, bbox_to_anchor=(1,0.15), frameon=False)
+
+
+        #data without PTT
+        stat_df = df[df['Group'] != "PTT"]
+
+        #compute stats
+        comp1 = mc.MultiComparison(stat_df[f'PC{pc+1}'], stat_df['Group'])
+        tbl, a1, a2 = comp1.allpairtest(stats.ttest_ind, method= "bonf")
+
+        #stat bars
+        #first row is column names
+
+        loc = {}
+        switch = False
+        for row in tbl.data[1:]:
+            if row[5]:
+                g1 = row[0]
+                g2 = row[1]
+                #print(g1, g2)
+                if g1 == "Control" or g2 == "Control":
+                    right = False
+                else:
+                    right = True
+
+                t = row[2]
+                p = row[4]
+
+                g1_i = order.index(g1)
+                g2_i = order.index(g2)
+                #print(length)
+
+                bottom = min(g1_i, g2_i)
+                top = max(g1_i, g2_i)
+                
+
+                #length controls line plot x location
+                length = abs(g2_i-g1_i)
+
+                #even lengths on the right, odd lengths on the left
+                #right = length %2 == 0
+
+                gap = 0.0
+                x_dist_iter = length
+                x_dist = gap
+                br_length =0.2
+                
+
+                while x_dist_iter -1 > 0:
+                    x_dist_iter -=1
+                    x_dist += x_dist_iter + gap
+
+                if right:
+                    # if use_case=="n187" and pc == 0:
+                    #     x_pos = x_dist + 7 + ((top - length) %length)
+                    # else:
+                    x_pos = x_dist + 18 + ((top - length) %length)
+                    br_length = -br_length
+                    text_offset = 0.16
+                else:
+                    if use_case=="n183" and pc == 0:
+                        ax.set_xlim(-23,25)
+                        x_pos = -x_dist -9 - ((top - length) %length)
+                    # elif use_case=="n187" and pc == 0:
+                    #     ax.set_xlim(-23,15)
+                    #     x_pos = -x_dist -18 - ((top - length) %length)
+                    #     ax.legend(legendLabels, loc="lower left", fontsize=12, bbox_to_anchor=(0.83,0.15), frameon=False)
+                    else:
+                        x_pos = -x_dist -6 - ((top - length) %length)
+                    text_offset = -0.65
+                    
+                y_offset = -move
+                y_scale = 1
+                y_gap = 0.09
+
+                
+
+                #vertical line
+                ax.plot([x_pos, x_pos], [y_scale*bottom+y_gap + y_offset, y_scale*top-y_gap + y_offset], lw=2, color='black', marker='', zorder=4, clip_on=False)
+                y_top = y_scale*top-y_gap + y_offset
+                y_bottom = y_scale*bottom+y_gap + y_offset
+                sig = "ERROR"
+                #print(x_pos, y1, y2, y1-y2)
+                if p < 0.05:
+                    if p < 0.01:
+                        if p < 0.001:
+                            sig = "***"
+                        else:
+                            sig = "**"
+                    else:
+                        sig = "*"
+
+                ax.text(x_pos + text_offset, y_bottom + (y_top-y_bottom)/2, sig,rotation=90, clip_on=False, backgroundcolor='white', zorder=2.5, color='black', va='center')
+                #horizontal bars
+                ax.plot([x_pos, x_pos+br_length], [y_scale*top-y_gap + y_offset, y_scale*top-y_gap + y_offset], lw=2, color='black', marker='', zorder=4, clip_on=False)
+                ax.plot([x_pos, x_pos+br_length], [y_scale*bottom+y_gap + y_offset, y_scale*bottom+y_gap + y_offset], lw=2, color='black', marker='', zorder=4, clip_on=False)
+
+
+        #Set spine thickness (and whatever else)
+        plt.setp(ax.spines.values(), lw=4)
+        #Only keep bottom and left spines
+        ax.spines[['right', 'top']].set_visible(False)
+        ax.set_title(f"PC{pc+1}")
+
+    fig.legend(legendLabels, loc="lower left", fontsize=12, bbox_to_anchor=(0.84,0.15), frameon=False)
+    fig.suptitle(f"{use_case}")
+        #plt.savefig(f'../figures/STATS_{use_case}_raincloud_PC{pc+1}{run_identifier}.png', bbox_inches='tight')
+```
+
+## Radar plots - Model 1
+
+```{r}
+#| echo: false
+#| layout: [[85,85,85]]
+library(fmsb)
+#setwd('/Users/sab322/glasgow/presentation/src')
+df <- read.table(file = "../data/nbridge_model1_n203/analysis/results/NBRIDGE_Glasgow.collaboration_SPIA_NA_CAARMS-BACS-SPIA_n203_BehaviorPCALoadings.tsv", sep = '\t', header = TRUE)
+
+# subset PCs
+df_PC1 <- df[1,]
+df_PC1 <- subset(df_PC1, select = -X)
+df_PC2 <- df[2,]
+df_PC2 <- subset(df_PC2, select = -X)
+df_PC3 <- df[3,]
+df_PC3 <- subset(df_PC3, select = -X)
+
+df_PC1 <- df_PC1 * -1
+df_PC2 <- df_PC2 * -1
+df_PC3 <- df_PC3 * -1
+
+
+# To use the fmsb package, I have to add 2 lines to the dataframe: the max (1) and min (-1) of each topic to show on the plot!
+df_PC1 <- rbind(rep(0.5,33) , rep(-0.5,33) , df_PC1)
+df_PC2 <- rbind(rep(0.5,33) , rep(-0.5,33) , df_PC2)
+df_PC3 <- rbind(rep(0.5,33) , rep(-0.5,33) , df_PC3)
+
+#df_PC4 <- rbind(rep(0.5,33) , rep(-0.5,33) , df_PC4)
+#df_PC5 <- rbind(rep(0.5,33) , rep(-0.5,33) , df_PC5)
+
+# define colors of each of the measures
+# #FF00FF = magenta --> positive
+# #176423 = green --> negative / disorganized
+# #ff9402 = orange --> hallucinations / delusions
+# #2283c1 = blue --> cognition
+# #ff3616 = red --> age
+Sxcols_CBS=c("#FF00FF","#FF00FF","#FF00FF","#FF00FF","#FF00FF","#FF00FF","#FF00FF","#FF00FF",
+         "#176423","#176423","#176423","#176423","#176423",
+         "#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402","#ff9402")
+#         "#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1","#2283c1",
+#         "#ff3616","#ff3616","#ff3616","#ff3616","#ff3616","#ff3616")
+
+numericlabels=c("1" , "2" , "3" , "4" , "5", "6" , "7" , "8", "9", "10", "11" , "12" ,
+                "13" , "14", "15" , "16" , "17", "18", "19" , "20" , "21" , "22" ,
+                "23", "24" , "25" , "26","27")
+
+# radar chart function
+radarchartvar <- function(df, latcol = "black", latlty = 1, axistype = 0, seg = 4,
+                          pty = 16, pcol = 1:8, plty = 1:6, plwd = 1,
+                          pdensity = NULL, pangle = 45, pfcol = NA, cglty = 3,
+                          cglwd = 1, cglcol = Sxcols, axislabcol = "black",
+                          title = "", maxmin = TRUE, na.itp = TRUE,
+                          centerzero = FALSE, vlabels = NULL, vlabcol = "black", vlcex = NULL,
+                          caxislabels = NULL, calcex = NULL, paxislabels = NULL,
+                          seglty = 1, seglwd = 3, segcol = "white",
+                          segmaxcol = "grey", segmincol = "grey", palcex = NULL, ...) {
+  # initial checks
+  if (!is.data.frame(df)) {
+    cat("The data must be given as a dataframe.\n")
+    return()
+  }
+  if ((n <- length(df)) < 3) {
+    cat("The number of variables must be 3 or more.\n")
+    return()
+  }
+  if (maxmin == FALSE) {
+    dfmax <- apply(df, 2, max)
+    dfmin <- apply(df, 2, min)
+    df <- rbind(dfmax, dfmin, df)
+  }
+  # plot
+  plot(c(-1.2, 1.2),
+       c(-1.2, 1.2),
+       type = "n",
+       frame.plot = FALSE,
+       axes = FALSE,
+       xlab = "",
+       ylab = "",
+       main = title,
+       cex.main = 2,
+       asp = 1,
+       ...
+  )
+  # create polygons
+  theta <- seq(90, 450, length = n + 1) * pi / 180
+  theta <- theta[1:n]
+  xx <- cos(theta)
+  yy <- sin(theta)
+  CGap <- ifelse(centerzero, 0, 1)
+  for (i in 0:seg) {
+    polygon(xx * (i + CGap) / (seg + CGap),
+            yy * (i + CGap) / (seg + CGap),
+            lty = seglty,
+            lwd = seglwd,
+            border = segcol
+    )
+    if (axistype == 1 | axistype == 3)
+      CAXISLABELS <- seq(-1,1,length=seg+1)[i+1]
+    CAXISLABELS <- paste(i/seg * 100, "(%)")
+    if (axistype == 4 | axistype == 5)
+      CAXISLABELS <- sprintf("%3.2f", i/seg)
+    if (!is.null(caxislabels) & (i < length(caxislabels)))
+      CAXISLABELS <- caxislabels[i + 1]
+    if (axistype == 1 | axistype == 3 | axistype == 4 | axistype ==
+        5) {
+      if (is.null(calcex))
+        text(-0.05, (i + CGap)/(seg + CGap), CAXISLABELS,
+             col = axislabcol)
+      else text(-0.05, (i + CGap)/(seg + CGap), CAXISLABELS,
+                col = axislabcol, cex = calcex)
+    }
+  }
+  polygon(xx * ((seg/2) + CGap)/(seg + CGap), yy * ((seg/2) + CGap)/(seg + CGap), lty = 1, lwd = 4.5, border = latcol)
+  if (centerzero) {
+    arrows(0, 0, xx * 1, yy * 1,
+           lwd = cglwd, lty = cglty,
+           length = 0, col = cglcol
+    )
+  }
+  else {
+    arrows(xx / (seg + CGap), yy / (seg + CGap), xx * 1, yy *
+             1, lwd = cglwd, lty = cglty, length = 0, col = cglcol)
+  }
+  # p axis labels
+  PAXISLABELS <- df[1, 1:n]
+  if (!is.null(paxislabels)) {
+    PAXISLABELS <- paxislabels
+  }
+  if (axistype == 2 | axistype == 3 | axistype == 5) {
+    if (is.null(palcex)) {
+      text(xx[1:n], yy[1:n], PAXISLABELS, col = axislabcol)
+    } else {
+      text(xx[1:n], yy[1:n], PAXISLABELS,
+           col = axislabcol,
+           cex = palcex
+      )
+    }
+  }
+  # vlabels
+  VLABELS <- colnames(df)
+  if (!is.null(vlabels))
+    VLABELS <- vlabels
+  if (is.null(vlcex))
+    text(xx * 1.2, yy * 1.2, VLABELS, col = vlabcol)
+  else text(xx * 1.2, yy * 1.2, VLABELS, cex = vlcex, col = vlabcol)
+  series <- length(df[[1]])
+  # series
+  series <- length(df[[1]])
+  SX <- series - 2
+  if (length(pty) < SX) {
+    ptys <- rep(pty, SX)
+  }
+  else {
+    ptys <- pty
+  }
+  if (length(pcol) < SX) {
+    pcols <- rep(pcol, SX)
+  }
+  else {
+    pcols <- pcol
+  }
+  if (length(plty) < SX) {
+    pltys <- rep(plty, SX)
+  }
+  else {
+    pltys <- plty
+  }
+  if (length(plwd) < SX) {
+    plwds <- rep(plwd, SX)
+  }
+  else {
+    plwds <- plwd
+  }
+  if (length(pdensity) < SX) {
+    pdensities <- rep(pdensity, SX)
+  }
+  else {
+    pdensities <- pdensity
+  }
+  if (length(pangle) < SX) {
+    pangles <- rep(pangle, SX)
+  }
+  else {
+    pangles <- pangle
+  }
+  if (length(pfcol) < SX) {
+    pfcols <- rep(pfcol, SX)
+  }
+  else {
+    pfcols <- pfcol
+  }
+  # c axis labels
+  for (i in 0:seg) {
+    if (axistype == 1 | axistype == 3) {
+      CAXISLABELS <- seq(-1, 1, length = seg + 1)[i + 1]
+    }
+    CAXISLABELS <- paste(i/seg * 100, "(%)")
+    if (axistype == 4 | axistype == 5) {
+      CAXISLABELS <- sprintf("%3.2f", i / seg)
+    }
+    if (!is.null(caxislabels) & (i < length(caxislabels))) {
+      CAXISLABELS <- caxislabels[i + 1]
+    }
+    if (axistype == 1 | axistype == 3 | axistype == 4 | axistype == 5) {
+      if (is.null(calcex)) {
+        text(-0.05, (i + CGap) / (seg + CGap), CAXISLABELS, col = axislabcol)
+      } else {
+        text(-0.05, (i + CGap) / (seg + CGap), CAXISLABELS, col = axislabcol, cex = calcex)
+      }
+    }
+  }
+  for (i in 3:series) {
+    xxs <- xx
+    yys <- yy
+    scale <- CGap / (seg + CGap) + (df[i, ] - df[2, ]) / (df[1, ] - df[2, ]) * seg / (seg + CGap)
+    if (sum(!is.na(df[i, ])) < 3) {
+      cat(sprintf("[NOT ENOUGH DATA] at %d\n%g\n", i, df[i, ]))
+    }
+    else {
+      for (j in 1:n) {
+        if (is.na(df[i, j])) {
+          if (na.itp) {
+            left <- ifelse(j > 1, j - 1, n)
+            while (is.na(df[i, left])) {
+              left <- ifelse(left > 1, left - 1, n)
+            }
+            right <- ifelse(j < n, j + 1, 1)
+            while (is.na(df[i, right])) {
+              right <- ifelse(right < n, right + 1, 1)
+            }
+            xxleft <- xx[left] * CGap / (seg + CGap) +
+              xx[left] * (df[i, left] - df[2, left]) / (df[
+                1,
+                left
+              ] - df[2, left]) * seg / (seg + CGap)
+            yyleft <- yy[left] * CGap / (seg + CGap) +
+              yy[left] * (df[i, left] - df[2, left]) / (df[
+                1,
+                left
+              ] - df[2, left]) * seg / (seg + CGap)
+            xxright <- xx[right] * CGap / (seg + CGap) +
+              xx[right] * (df[i, right] - df[2, right]) / (df[
+                1,
+                right
+              ] - df[2, right]) * seg / (seg + CGap)
+            yyright <- yy[right] * CGap / (seg + CGap) +
+              yy[right] * (df[i, right] - df[2, right]) / (df[
+                1,
+                right
+              ] - df[2, right]) * seg / (seg + CGap)
+            if (xxleft > xxright) {
+              xxtmp <- xxleft
+              yytmp <- yyleft
+              xxleft <- xxright
+              yyleft <- yyright
+              xxright <- xxtmp
+              yyright <- yytmp
+            }
+            xxs[j] <- xx[j] * (yyleft * xxright - yyright *
+                                 xxleft) / (yy[j] * (xxright - xxleft) - xx[j] *
+                                              (yyright - yyleft))
+            yys[j] <- (yy[j] / xx[j]) * xxs[j]
+          }
+          else {
+            xxs[j] <- 0
+            yys[j] <- 0
+          }
+        }
+        else {
+          xxs[j] <- xx[j] * CGap / (seg + CGap) + xx[j] *
+            (df[i, j] - df[2, j]) / (df[1, j] - df[2, j]) *
+            seg / (seg + CGap)
+          yys[j] <- yy[j] * CGap / (seg + CGap) + yy[j] *
+            (df[i, j] - df[2, j]) / (df[1, j] - df[2, j]) *
+            seg / (seg + CGap)
+        }
+      }
+      if (is.null(pdensities)) {
+        polygon(xxs,
+                yys,
+                lty = pltys[i - 2],
+                lwd = plwds[i - 2],
+                border = pcols[i - 2],
+                col = pfcols[i - 2]
+        )
+      }
+      else {
+        polygon(xxs,
+                yys,
+                lty = pltys[i - 2],
+                lwd = plwds[i - 2],
+                border = pcols[i - 2],
+                density = pdensities[i - 2],
+                angle = pangles[i - 2],
+                col = pfcols[i - 2]
+        )
+      }
+      points(xx * scale, yy * scale,
+             pch = ptys[i - 2],
+             col = pcols[i - 2]
+      )
+    }
+  }
+}
+
+# RADARCHART PARAMETERS
+# pcol → line color
+# pfcol → fill color
+# plwd → line width
+# cglcol → color of the net
+# cglty → net line type (see possibilities)
+# axislabcol → color of axis labels
+# caxislabels → vector of axis labels to display
+# cglwd → net width
+# vlcex → group labels size
+# vlabcol -> label colours
+# plot using radarchartvar defined below
+# vlabels is where you can insert the labels but may need to input their colour as well
+
+# save graphs
+#png("../figures/model1_n203_PC1.png", width=700,height=700)
+radarchartvar(df_PC1, axistype=0, cglty=1,cglwd=2, vlabels=c(numericlabels), vlabcol =c(Sxcols_CBS), vlcex = 2, seglty = 1, seglwd = 2, segcol="grey90", cglcol=c(Sxcols_CBS), plwd=8, seg=2, pcol=c("black"), plty=1)
+#dev.off()
+
+#png("../figures/model1_n203_PC2.png", width=700,height=700)
+radarchartvar(df_PC2, axistype=0, cglty=1,cglwd=2, vlabels=c(numericlabels), vlabcol =c(Sxcols_CBS), vlcex = 2, seglty = 1, seglwd = 2, segcol="grey90", cglcol=c(Sxcols_CBS), plwd=8, seg=2, pcol=c("black"), plty=1)
+#dev.off()
+
+#png("../figures/model1_n203_PC3.png", width=700,height=700)
+radarchartvar(df_PC3, axistype=0, cglty=1,cglwd=2, vlabels=c(numericlabels), vlabcol =c(Sxcols_CBS), vlcex = 2, seglty = 1, seglwd = 2, segcol="grey90", cglcol=c(Sxcols_CBS), plwd=8, seg=2, pcol=c("black"), plty=1)
+#dev.off()
+```
+
+
+
+
